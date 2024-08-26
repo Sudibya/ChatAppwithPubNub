@@ -1,24 +1,30 @@
-import logo from './logo.svg';
-import './App.css';
+import React from 'react';
+import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
+import { PubNubProvider } from 'pubnub-react';
+import pubnub from './config/pubnubConfig';
+import AdminChat from './components/AdminChat';
+import ClientChat from './components/ClientChat';
 
 function App() {
+  const clientChannels = ['client1-channel', 'client2-channel', 'client3-channel'];
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
+    <PubNubProvider client={pubnub}>
+      <Router>
+        <Routes>
+          {/* Routes for Clients */}
+          <Route path="/client1" element={<ClientChat username="client1" />} />
+          <Route path="/client2" element={<ClientChat username="client2" />} />
+          <Route path="/client3" element={<ClientChat username="client3" />} />
+
+          {/* Route for Admin */}
+          <Route path="/admin" element={<AdminChat clientChannels={clientChannels} />} />
+
+          {/* Default Route */}
+          <Route path="/" element={<Navigate to="/client1" />} />
+        </Routes>
+      </Router>
+    </PubNubProvider>
   );
 }
 
