@@ -41,6 +41,33 @@ function AdminChat({ clientChannels }) {
     });
   }, [selectedClient]);
 
+  const handlePresence = useCallback((presenceEvent) => {
+    if (presenceEvent.action === 'state-change') {
+      const { channel, state } = presenceEvent;
+      if (state && state.isTyping !== undefined && state.sender !== 'Admin') {  // Ensure it doesn't track admin's own typing
+        setTypingStates((prevTypingStates) => ({
+          ...prevTypingStates,
+          [channel]: state.isTyping,
+        }));
+
+        // Clear the previous timeout if it exists
+        if (typingTimeoutRefs.current[channel]) {
+          clearTimeout(typingTimeoutRefs.current[channel]);
+        }
+
+        // Set a timeout to reset typing state after a delay
+        if (state.isTyping) {
+          typingTimeoutRefs.current[channel] = setTimeout(() => {
+            setTypingStates((prevTypingStates) => ({
+              ...prevTypingStates,
+              [channel]: false,
+            }));
+          }, 3000); // 3 seconds timeout
+        }
+      }
+    }
+  }, []);
+
   useEffect(() => {
     const fetchHistory = async () => {
       try {
@@ -60,42 +87,19 @@ function AdminChat({ clientChannels }) {
     pubnub.subscribe({ channels: clientChannels, withPresence: true });
     pubnub.addListener({
       message: handleMessage,
-      presence: (presenceEvent) => {
-        if (presenceEvent.action === 'state-change') {
-          const { channel, state } = presenceEvent;
-          if (state && state.isTyping !== undefined) {
-            setTypingStates((prevTypingStates) => ({
-              ...prevTypingStates,
-              [channel]: state.isTyping,
-            }));
-
-            // Clear the previous timeout if it exists
-            if (typingTimeoutRefs.current[channel]) {
-              clearTimeout(typingTimeoutRefs.current[channel]);
-            }
-
-            // Set a timeout to reset typing state after a delay
-            if (state.isTyping) {
-              typingTimeoutRefs.current[channel] = setTimeout(() => {
-                setTypingStates((prevTypingStates) => ({
-                  ...prevTypingStates,
-                  [channel]: false,
-                }));
-              }, 3000); // 3 seconds timeout
-            }
-          }
-        }
-      }
+      presence: handlePresence,
     });
 
     return () => {
-      pubnub.removeListener({ message: handleMessage });
+      const currentTypingTimeoutRefs = typingTimeoutRefs.current;
+
+      pubnub.removeListener({ message: handleMessage, presence: handlePresence });
       pubnub.unsubscribe({ channels: clientChannels });
 
       // Clear all timeouts
-      Object.values(typingTimeoutRefs.current).forEach(clearTimeout);
+      Object.values(currentTypingTimeoutRefs).forEach(clearTimeout);
     };
-  }, [pubnub, clientChannels, selectedClient, handleMessage]);
+  }, [pubnub, clientChannels, selectedClient, handleMessage, handlePresence]);
 
   const sendMessage = () => {
     if (message.trim() === '') return;
@@ -125,12 +129,12 @@ function AdminChat({ clientChannels }) {
     if (text.trim()) {
       pubnub.setState({
         channels: [selectedClient],
-        state: { isTyping: true },
+        state: { isTyping: true, sender: 'Admin' },  // Include sender to prevent showing admin's own typing
       });
     } else {
       pubnub.setState({
         channels: [selectedClient],
-        state: { isTyping: false },
+        state: { isTyping: false, sender: 'Admin' },  // Include sender to prevent showing admin's own typing
       });
     }
 
@@ -142,7 +146,7 @@ function AdminChat({ clientChannels }) {
     typingTimeoutRefs.current[selectedClient] = setTimeout(() => {
       pubnub.setState({
         channels: [selectedClient],
-        state: { isTyping: false },
+        state: { isTyping: false, sender: 'Admin' },  // Include sender to prevent showing admin's own typing
       });
     }, 3000); // 3 seconds timeout
   };

@@ -12,10 +12,11 @@ function ClientChat({ username }) {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showScrollTopButton, setShowScrollTopButton] = useState(false);
   const [showOptionsMenu, setShowOptionsMenu] = useState(null);
-  const [isTyping, setIsTyping] = useState(false);  // Track typing state
+  const [isSending, setIsSending] = useState(false); // Track sending state
+  const [adminTyping, setAdminTyping] = useState(false); // Track if admin is typing
   const channel = `${username}-channel`;
   const messageEndRef = useRef(null);
-  const typingTimeoutRef = useRef(null); // Ref to manage typing timeout
+  const typingTimeoutRef = useRef(null);
 
   useEffect(() => {
     const fetchHistory = async () => {
@@ -40,7 +41,20 @@ function ClientChat({ username }) {
       },
       presence: (presenceEvent) => {
         if (presenceEvent.action === 'state-change') {
-          setIsTyping(presenceEvent.state.isTyping);
+          const { state } = presenceEvent;
+          if (state && state.isTyping !== undefined && state.sender !== username) { // Ensure it's not the client's own typing state
+            setAdminTyping(state.isTyping);
+
+            // Clear the previous timeout if it exists
+            clearTimeout(typingTimeoutRef.current);
+
+            // Set a timeout to reset typing state after a delay
+            if (state.isTyping) {
+              typingTimeoutRef.current = setTimeout(() => {
+                setAdminTyping(false);
+              }, 3000); // 3 seconds timeout
+            }
+          }
         }
       }
     });
@@ -48,7 +62,7 @@ function ClientChat({ username }) {
     return () => {
       pubnub.unsubscribe({ channels: [channel] });
     };
-  }, [pubnub, channel]);
+  }, [pubnub, channel, username]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -98,8 +112,10 @@ function ClientChat({ username }) {
     pubnub.publish({ channel, message: newMessage });
   };
 
-  const sendMessage = () => {
-    if (message.trim() === "") return;
+  const sendMessage = async () => {
+    if (message.trim() === "" || isSending) return;
+
+    setIsSending(true); // Prevent further sending until this one is processed
 
     const timestamp = new Date().toLocaleTimeString([], {
       hour: "2-digit",
@@ -108,46 +124,58 @@ function ClientChat({ username }) {
 
     const newMessage = { text: message, time: timestamp, sender: username };
 
-    pubnub.publish({ channel, message: newMessage });
-    setMessages((prevMessages) => [...prevMessages, newMessage]);
-    setMessage("");
+    try {
+      await pubnub.publish({ channel, message: newMessage });
+      setMessage("");
+    } catch (error) {
+      console.error("Error sending message:", error);
+    } finally {
+      setIsSending(false); // Allow sending again
 
-    pubnub.setState({
-      channels: [channel],
-      state: { isTyping: false },
-    });
+      pubnub.setState({
+        channels: [channel],
+        state: { isTyping: false, sender: username }, // Ensure sender is the client
+      });
+    }
   };
 
   const handleTyping = (e) => {
-    setMessage(e.target.value);
+    const text = e.target.value;
+    setMessage(text);
 
-    if (e.target.value.trim() && !isTyping) {
+    if (text.trim()) {
       pubnub.setState({
         channels: [channel],
-        state: { isTyping: true },
+        state: { isTyping: true, sender: username }, // Ensure sender is the client
       });
-    } else if (!e.target.value.trim() && isTyping) {
+    } else {
       pubnub.setState({
         channels: [channel],
-        state: { isTyping: false },
+        state: { isTyping: false, sender: username }, // Ensure sender is the client
       });
     }
 
     // Reset typing status if user stops typing for a while
     clearTimeout(typingTimeoutRef.current);
-    if (e.target.value.trim()) {
+    if (text.trim()) {
       typingTimeoutRef.current = setTimeout(() => {
         pubnub.setState({
           channels: [channel],
-          state: { isTyping: false },
+          state: { isTyping: false, sender: username }, // Ensure sender is the client
         });
       }, 3000); // 3 seconds timeout
     }
   };
 
   const onEmojiClick = (event, emojiObject) => {
-    setMessage(message + emojiObject.emoji);
-    setShowEmojiPicker(false);
+    const newMessage = message + emojiObject.emoji;
+    setMessage(newMessage);
+    if (newMessage.trim()) {
+      pubnub.setState({
+        channels: [channel],
+        state: { isTyping: true, sender: username }, // Ensure sender is the client
+      });
+    }
   };
 
   const handleScrollTop = () => {
@@ -198,7 +226,7 @@ function ClientChat({ username }) {
           </div>
         ))}
         <div ref={messageEndRef} />
-        {isTyping && <div className="text-muted">Admin is typing...</div>}
+        {adminTyping && <div className="text-muted">Admin is typing...</div>}
       </div>
       {showScrollTopButton && (
         <button className="btn btn-secondary position-absolute" style={{ bottom: "80px", right: "20px" }} onClick={handleScrollTop}>
@@ -220,11 +248,11 @@ function ClientChat({ username }) {
         )}
         <input
           value={message}
-          onChange={handleTyping}  // Update on typing
+          onChange={handleTyping}
           placeholder="Type your message"
           className="form-control"
         />
-        <button onClick={sendMessage} className="btn btn-success ms-2">
+        <button onClick={sendMessage} className="btn btn-success ms-2" disabled={isSending}>
           Send
         </button>
       </div>
